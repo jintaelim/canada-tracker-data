@@ -1,0 +1,39 @@
+# 매일 공식 처리기간을 모아 GitHub Pages에 정적 파일로 올린다.
+# 앱은 https://<계정>.github.io/<저장소>/v1/data.json 을 읽는다.
+name: collect-processing-times
+
+on:
+  schedule:
+    - cron: "0 14 * * *" # 매일 14:00 UTC (토론토 오전 9~10시)
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: 처리기간 수집
+        run: python collect.py site
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: collect
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - uses: actions/deploy-pages@v4

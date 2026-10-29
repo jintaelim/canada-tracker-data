@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "reviewedBy": null,
+  "rules": [
+    {
+      "id": "rad_notice",
+      "days": 15,
+      "anchor": "reasons_received",
+      "situation": "난민 신청(RPD)이 기각됐어요",
+      "action": "RAD 항소장 제출",
+      "forum": "IRB-RAD",
+      "trigger": {
+        "track": "refugee_claim",
+        "stage": "rpd_decision",
+        "outcome": "refused"
+      },
+      "sourceUrl": "https://irb.gc.ca/en/filing-refugee-appeal/Pages/refugee1.aspx",
+      "eligibilityNote": "근거 없음 또는 명백히 근거 없음 판정을 받았거나 일부 안전한 제3국 사건이면 RAD에 항소할 수 없어요. 결정문에서 항소 가능 여부를 먼저 확인하세요."
+    },
+    {
+      "id": "rad_record",
+      "days": 45,
+      "anchor": "reasons_received",
+      "situation": "RAD 항소장을 냈어요 (기록 제출)",
+      "action": "RAD 항소인 기록 제출",
+      "forum": "IRB-RAD",
+      "trigger": {
+        "track": "refugee_claim",
+        "stage": "rpd_decision",
+        "outcome": "refused"
+      },
+      "sourceUrl": "https://cisr-irb.gc.ca/en/refugee-appeals/Pages/RefAppGuide.aspx",
+      "eligibilityNote": "근거 없음 또는 명백히 근거 없음 판정을 받았거나 일부 안전한 제3국 사건이면 RAD에 항소할 수 없어요. 결정문에서 항소 가능 여부를 먼저 확인하세요.",
+      "basisNote": "45일은 IRB 실무 공지(2020년 9월 28일부터 시행) 기준이에요. 규정(IRPR 159.91)은 30일이라, 공지가 철회되면 30일로 돌아갈 수 있어요.",
+      "basisUrl": "https://irb-cisr.gc.ca/en/filing-refugee-appeal/Pages/refugee1.aspx"
+    },
+    {
+      "id": "fc_jr_inside",
+      "days": 15,
+      "anchor": "decision_received",
+      "situation": "캐나다 안에서 받은 결정이 거절됐어요",
+      "action": "연방법원 사법심사 신청",
+      "forum": "FC",
+      "trigger": {
+        "anyRefusalWhere": {
+          "locationContext": "inside_canada"
+        }
+      },
+      "sourceUrl": "https://www.bellissimolawgroup.com/federal-court"
+    },
+    {
+      "id": "fc_jr_outside",
+      "days": 60,
+      "anchor": "decision_received",
+      "situation": "캐나다 밖에서 받은 결정이 거절됐어요",
+      "action": "연방법원 사법심사 신청",
+      "forum": "FC",
+      "trigger": {
+        "anyRefusalWhere": {
+          "locationContext": "outside_canada"
+        }
+      },
+      "sourceUrl": "https://www.bellissimolawgroup.com/federal-court"
+    },
+    {
+      "id": "fc_jr_perfect",
+      "days": 30,
+      "anchor": "filed_or_reasons_received",
+      "situation": "연방법원에 사법심사를 신청했어요",
+      "action": "사법심사 신청 기록 완성",
+      "forum": "FC",
+      "trigger": {
+        "track": "judicial_review",
+        "stage": "jr_filed"
+      },
+      "extensions": [
+        {
+          "days": 45,
+          "label": "2025-05 특별명령",
+          "active": false,
+          "verifyUrl": "https://immigration.ca/canada-extends-time-limit-for-immigration-judicial-review-applications/"
+        }
+      ],
+      "sourceUrl": "https://laws-lois.justice.gc.ca/eng/regulations/sor-93-22/section-10-20060322.html"
+    },
+    {
+      "id": "iad_sponsorship",
+      "days": 30,
+      "anchor": "decision_received",
+      "situation": "해외 가족초청이 거절됐어요",
+      "action": "IAD 항소장 제출",
+      "forum": "IRB-IAD",
+      "trigger": {
+        "track": "ircc_application",
+        "programKey": "pr_family_outland",
+        "outcome": "refused"
+      },
+      "sourceUrl": "https://www.ansariimmigration.com/post/immigration-appeal-division-who-actually-has-a-right-to-appeal-a-sponsorship-refusal-and-what-the"
+    },
+    {
+      "id": "iad_residency",
+      "days": 60,
+      "anchor": "decision_received",
+      "situation": "거주의무 위반으로 영주권 카드 갱신이나 PRTD가 거절됐어요",
+      "action": "IAD 항소장 제출 (거주의무)",
+      "forum": "IRB-IAD",
+      "trigger": {
+        "track": "pr_card_renewal",
+        "stage": "decision",
+        "outcome": "refused"
+      },
+      "sourceUrl": "https://www.ansariimmigration.com/post/immigration-appeal-division-who-actually-has-a-right-to-appeal-a-sponsorship-refusal-and-what-the",
+      "eligibilityNote": "거절 사유가 거주의무(5년 중 730일)가 아니면 IAD 항소 대상이 아닐 수 있어요. 결정문에서 거절 사유와 항소 안내를 먼저 확인하세요."
+    },
+    {
+      "id": "fc_jr_lmia",
+      "days": 30,
+      "anchor": "decision_received",
+      "situation": "LMIA가 거절됐어요",
+      "action": "연방법원 사법심사 신청 (LMIA)",
+      "forum": "FC",
+      "trigger": {
+        "track": "lmia_work_permit",
+        "stage": "lmia_decision",
+        "outcome": "refused"
+      },
+      "sourceUrl": "https://laws-lois.justice.gc.ca/eng/acts/f-7/section-18.1.html",
+      "eligibilityNote": "LMIA는 고용주 명의 신청이라 사법심사도 고용주가 신청해요. 보완해서 다시 신청하는 경우가 더 많아요.",
+      "basisNote": "LMIA 결정은 이민법이 아닌 연방법원법(18.1조) 기준이라 15일이 아닌 30일이에요. 출시 전 법률 검토가 필요해요.",
+      "basisUrl": "https://laws-lois.justice.gc.ca/eng/acts/f-7/section-18.1.html"
+    }
+  ]
+}
