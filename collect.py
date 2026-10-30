@@ -18,6 +18,8 @@ from pathlib import Path
 IRCC_PTIME = "https://www.canada.ca/content/dam/ircc/documents/json/data-ptime-non-country-en.json"
 IRCC_FLPT = "https://www.canada.ca/content/dam/ircc/documents/json/flpt-en.json"
 ESDC_LMIA = "https://www.canada.ca/en/employment-social-development/services/foreign-workers/labour-market-impact-assessment-processing-times.html"
+IRCC_EE = "https://www.canada.ca/content/dam/ircc/documents/json/ee_rounds_123_en.json"
+EE_PAGE = "https://www.canada.ca/en/immigration-refugees-citizenship/corporate/mandate/policies-operational-instructions-agreements/ministerial-instructions/express-entry-rounds.html"
 IRCC_TOOL = "https://www.canada.ca/en/immigration-refugees-citizenship/services/application/check-processing-times.html"
 
 # 앱 programKey → 공식 데이터 위치
@@ -42,10 +44,11 @@ LMIA_STREAMS = {
 LMIA_PROGRAMS = {"lmia_high_wage": "high_wage"}
 
 WAIT_MONTHS_KEPT = 36  # 신청월별 남은 기간은 최근 3년치만
+EE_ROUNDS_KEPT = 12  # Express Entry 초청 회차는 최근 12회
 
 
 LOCAL_DIR = None
-LOCAL_FILES = {IRCC_PTIME: "nc.json", IRCC_FLPT: "flpt.json", ESDC_LMIA: "lmia.html"}
+LOCAL_FILES = {IRCC_PTIME: "nc.json", IRCC_FLPT: "flpt.json", ESDC_LMIA: "lmia.html", IRCC_EE: "ee.json"}
 
 
 def fetch(url: str) -> str:
@@ -127,6 +130,16 @@ def collect_lmia():
     return programs, {"unit": "business_days", "period": period, "streams": streams}, source
 
 
+def collect_ee():
+    rounds = json.loads(fetch(IRCC_EE))["rounds"][:EE_ROUNDS_KEPT]
+    out = [
+        {"date": r["drawDate"], "name": r["drawName"], "size": to_int(r["drawSize"]), "crs": to_int(r["drawCRS"])}
+        for r in rounds
+    ]
+    source = {"label": "IRCC Express Entry 초청 회차", "url": EE_PAGE, "updated": rounds[0]["drawDateFull"]}
+    return {"rounds": out}, source
+
+
 def main():
     global LOCAL_DIR
     args = sys.argv[1:]
@@ -142,6 +155,14 @@ def main():
     programs.update(lmia_programs)
     sources["esdc_lmia"] = lmia_source
 
+    # 초청 회차는 부가 정보라 실패해도 처리기간 갱신은 계속한다
+    try:
+        ee, ee_source = collect_ee()
+        sources["ircc_ee"] = ee_source
+    except Exception as e:  # noqa: BLE001
+        print(f"Express Entry 수집 실패: {e}")
+        ee = None
+
     missing = [k for k, v in programs.items() if v["days"] is None]
     data = {
         "schemaVersion": 1,
@@ -151,6 +172,8 @@ def main():
         "waitByMonth": wait,
         "lmia": lmia,
     }
+    if ee:
+        data["expressEntry"] = ee
     (out / "v1" / "data.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
     # 기한 규칙도 같은 곳에서 내려준다 (앱 업데이트 없이 규칙 교체용)
