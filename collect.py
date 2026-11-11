@@ -27,6 +27,11 @@ ESDC_LMIA = "https://www.canada.ca/en/employment-social-development/services/for
 IRCC_EE = "https://www.canada.ca/content/dam/ircc/documents/json/ee_rounds_123_en.json"
 EE_PAGE = "https://www.canada.ca/en/immigration-refugees-citizenship/corporate/mandate/policies-operational-instructions-agreements/ministerial-instructions/express-entry-rounds.html"
 IRB_RPD = "https://www.irb-cisr.gc.ca/en/statistics/protection/Pages/RPDStat{year}.aspx"
+# 캐나다 정부 공식 뉴스 피드 (Atom). 제목·요약·날짜·링크만 쓴다
+GC_NEWS = "https://api.io.canada.ca/io-server/gc/news/en/v2?dept={dept}&sort=publishedDate&orderBy=desc&pick=40&format=atom"
+# IRB는 이 피드에 뉴스를 올리지 않는다 (2026-11 확인). IRCC만
+NEWS_DEPTS = {"IRCC": "departmentofcitizenshipandimmigration"}
+NEWS_DAYS = 60
 IRCC_TOOL = "https://www.canada.ca/en/immigration-refugees-citizenship/services/application/check-processing-times.html"
 
 # 앱 programKey → 공식 데이터 위치
@@ -87,6 +92,7 @@ LOCAL_DIR = None
 LOCAL_FILES = {
     IRCC_PTIME: "nc.json", IRCC_FLPT: "flpt.json", ESDC_LMIA: "lmia.html", IRCC_EE: "ee.json",
     IRB_RPD.format(year=2025): "rpd2025.html", IRB_RPD.format(year=2026): "rpd2026.html",
+    GC_NEWS.format(dept=NEWS_DEPTS["IRCC"]): "news-ircc.xml",
     IRCC_PTIME_COUNTRY: "country.json", IRCC_COUNTRY_NAMES: "country-names.json", HISTORY_URL: "history.json",
 }
 
@@ -284,6 +290,41 @@ def collect_irb(today: dt.date):
     return {"rpd": years}, source
 
 
+def collect_news(today: dt.date):
+    """IRCC 공식 뉴스 최근 60일. 행사 일정 안내(media advisories)는 뺀다."""
+    import xml.etree.ElementTree as ET
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    since = today - dt.timedelta(days=NEWS_DAYS)
+    items = []
+    for source, dept in NEWS_DEPTS.items():
+        try:
+            feed = ET.fromstring(fetch(GC_NEWS.format(dept=dept)))
+        except Exception as e:  # noqa: BLE001
+            print(f"{source} 뉴스 수집 실패: {e}")
+            continue
+        for e in feed.findall("a:entry", ns):
+            kind = (e.find("a:category", ns).get("term") if e.find("a:category", ns) is not None else "").lower()
+            if kind == "media advisories":
+                continue
+            day = (e.findtext("a:updated", "", ns) or "")[:10]
+            if not day or dt.date.fromisoformat(day) < since:
+                continue
+            link = e.find("a:link", ns)
+            title = html.unescape((e.findtext("a:title", "", ns) or "").strip())
+            summary = html.unescape(re.sub(r"<[^>]+>", " ", e.findtext("a:summary", "", ns) or "")).strip()
+            summary = re.sub(r"\s+", " ", summary)
+            items.append({
+                "source": source,
+                "type": kind,
+                "date": day,
+                "title": title,
+                "summary": "" if summary == title else summary[:400],
+                "url": link.get("href") if link is not None else "",
+            })
+    items.sort(key=lambda x: x["date"], reverse=True)
+    return items
+
+
 def collect_lmia():
     page = fetch(ESDC_LMIA)
     table = re.search(r"<table.*?</table>", page, re.S).group(0)
@@ -355,6 +396,15 @@ def main():
     except Exception as e:  # noqa: BLE001
         print(f"IRB 통계 수집 실패: {e}")
         refugee = None
+
+    news = collect_news(dt.date.today())
+    (out / "v1").mkdir(parents=True, exist_ok=True)
+    (out / "v1" / "news.json").write_text(json.dumps({
+        "schemaVersion": 1,
+        "generatedAt": dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "items": news,
+    }, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    print(f"뉴스 {len(news)}건")
 
     history = load_history()
     added = update_history(history, series_points(programs, by_country or {}, sources))

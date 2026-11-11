@@ -14,6 +14,7 @@
 | 방문·슈퍼비자·스터디·워크 퍼밋(해외) 나라별 처리기간 | IRCC processing times (country) |
 | Express Entry 초청 회차 (약 2년치) | IRCC Express Entry rounds |
 | 난민 심사(RPD) 출신국별 결정 결과 (올해·작년) | IRB statistics — Claims by Country of Alleged Persecution |
+| 이민 뉴스 (`v1/news.json`, 최근 60일, 행사 안내 제외) | Government of Canada News API — IRCC (IRB는 이 피드에 올리지 않음) |
 
 ## 처리기간 기록 (`v1/history.json`, `v1/history/<키>.json`)
 - IRCC가 값을 바꿀 때마다 한 줄씩 쌓아요. 나라별은 `<프로그램키>__<국가코드>` (예: `wp_outland__KR`).
