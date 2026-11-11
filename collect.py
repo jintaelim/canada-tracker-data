@@ -8,14 +8,20 @@ IRCC·ESDC 공식 페이지에서 처리기간을 가져와 앱이 읽는 JSON �
      --from-dir: 이미 내려받은 공식 파일로 정리만 한다 (ptime.json / flpt.json / lmia.html)
 """
 import datetime as dt
+import html
 import json
 import re
 import shutil
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 IRCC_PTIME = "https://www.canada.ca/content/dam/ircc/documents/json/data-ptime-non-country-en.json"
+IRCC_PTIME_COUNTRY = "https://www.canada.ca/content/dam/ircc/documents/json/data-ptime-en.json"
+IRCC_COUNTRY_NAMES = "https://www.canada.ca/content/dam/ircc/documents/json/data-country-name-en.json"
+# 지난번에 올린 처리기간 기록. 사이트는 매번 통째로 바뀌므로 먼저 받아 와서 이어 쓴다
+HISTORY_URL = "https://jintaelim.github.io/canada-tracker-data/v1/history.json"
 IRCC_FLPT = "https://www.canada.ca/content/dam/ircc/documents/json/flpt-en.json"
 ESDC_LMIA = "https://www.canada.ca/en/employment-social-development/services/foreign-workers/labour-market-impact-assessment-processing-times.html"
 IRCC_EE = "https://www.canada.ca/content/dam/ircc/documents/json/ee_rounds_123_en.json"
@@ -26,12 +32,40 @@ IRCC_TOOL = "https://www.canada.ca/en/immigration-refugees-citizenship/services/
 FLPT_PROGRAMS = {
     "ee_cec": "cec",
     "ee_fsw": "fsw",
+    "pnp_ee": "pnp-ee",
+    "pnp_base": "pnp-base",
+    "qsw": "qsw",
+    "aip": "aip",
+    "caregiver": "caregiver",
+    "startup_visa": "startup-visa",
+    "self_employed": "self-employed",
+    "quebec_business": "quebec-business",
+    "pr_spouse_inland": "spousal-canada-roc",
     "pr_spouse_outland": "spousal-abroad-roc",
     "pr_family_outland": "pgp-roc",
+    "pr_dependant_outland": "dependants-abroad-roc",
+    "protected_persons": "protected-persons-in-canada-roc",
+    "humanitarian": "humanitarian-roc",
     "citizenship": "citizen-grants",
+    "citizenship_proof": "citizen-proofs",
 }
 PTIME_PROGRAMS = {
     "pr_card": ("pr_card", "existing_pr"),
+    "pr_card_new": ("pr_card", "new_pr"),
+    "visitor_inland": ("visitor_inside_canada", "visitor_inside_canada"),
+    "visitor_extension": ("visitor_extension", "visitor_extension"),
+    "sp_extension": ("study_extension", "study_extension"),
+    "wp_extension": ("work_extension", "work_extension"),
+    "iec": ("iec", "iec"),
+    "sawp": ("sawp", "sawp_current"),
+    "ee_fst": ("fed_skilled_trades", "skilled_trades_ee"),
+}
+# 신청자 국가마다 다른 처리기간 (앱 programKey → 공식 파일 묶음)
+COUNTRY_PROGRAMS = {
+    "visitor_outland": "visitor-outside-canada",
+    "super_visa": "supervisa",
+    "sp_outland": "study",
+    "wp_outland": "work",
 }
 LMIA_STREAMS = {
     "Global Talent Stream": "global_talent",
@@ -44,22 +78,29 @@ LMIA_STREAMS = {
 LMIA_PROGRAMS = {"lmia_high_wage": "high_wage"}
 
 WAIT_MONTHS_KEPT = 36  # 신청월별 남은 기간은 최근 3년치만
-EE_ROUNDS_KEPT = 12  # Express Entry 초청 회차는 최근 12회
+EE_ROUNDS_KEPT = 200  # Express Entry 초청 회차 (약 2년치, 종류별 비교용)
+HISTORY_POINTS_KEPT = 260  # 처리기간 기록은 계열마다 최근 260번 (주 1회 갱신이면 약 5년)
 
 
 LOCAL_DIR = None
-LOCAL_FILES = {IRCC_PTIME: "nc.json", IRCC_FLPT: "flpt.json", ESDC_LMIA: "lmia.html", IRCC_EE: "ee.json"}
+LOCAL_FILES = {
+    IRCC_PTIME: "nc.json", IRCC_FLPT: "flpt.json", ESDC_LMIA: "lmia.html", IRCC_EE: "ee.json",
+    IRCC_PTIME_COUNTRY: "country.json", IRCC_COUNTRY_NAMES: "country-names.json", HISTORY_URL: "history.json",
+}
 
 
 def fetch(url: str) -> str:
     if LOCAL_DIR:
-        return (LOCAL_DIR / LOCAL_FILES[url]).read_text(encoding="utf-8", errors="replace")
+        f = LOCAL_DIR / LOCAL_FILES[url]
+        if not f.exists():
+            raise FileNotFoundError(f)
+        return f.read_text(encoding="utf-8-sig", errors="replace")
     req = urllib.request.Request(url, headers={
         "User-Agent": "canada-tracker-collector/1.0 (public processing-time collector)",
         "Accept": "application/json, text/html",
     })
     with urllib.request.urlopen(req, timeout=60) as r:
-        return r.read().decode("utf-8", errors="replace")
+        return r.read().decode("utf-8-sig", errors="replace")
 
 
 def to_days(text: str):
@@ -104,6 +145,92 @@ def collect_ircc():
         "ircc_flpt": {"label": "IRCC 예상 처리기간", "url": IRCC_TOOL, "updated": flpt["default-update"]["flpt_lastupdated"]},
     }
     return programs, wait, sources
+
+
+MONTHS = ["january", "february", "march", "april", "may", "june", "july",
+          "august", "september", "october", "november", "december"]
+
+
+def iso_date(text: str):
+    """'November 4, 2026' → '2026-11-04', 'September 2026' → '2026-09-01'. 모르면 None."""
+    m = re.match(r"^\s*([A-Za-z]+)\s+(?:(\d{1,2}),\s*)?(\d{4})\s*$", text or "")
+    if not m or m.group(1).lower() not in MONTHS:
+        return None
+    return f"{m.group(3)}-{MONTHS.index(m.group(1).lower()) + 1:02d}-{int(m.group(2) or 1):02d}"
+
+
+def collect_countries():
+    """국가별 처리기간: {programKey: {국가코드: 일수}}. 처리기간이 없는 나라는 뺀다."""
+    raw = json.loads(fetch(IRCC_PTIME_COUNTRY))
+    names = json.loads(fetch(IRCC_COUNTRY_NAMES))["country-name"]
+    by_country, updated = {}, None
+    for key, group in COUNTRY_PROGRAMS.items():
+        values = {}
+        for code, text in raw.get(group, {}).items():
+            if not isinstance(text, str):
+                continue
+            if code == "lastupdated" or iso_date(text):  # 묶음 안에 날짜가 섞여 있다
+                updated = updated or text
+                continue
+            days = to_days(text)
+            if days is not None and code in names:
+                values[code] = days
+        by_country[key] = values
+    used = sorted({c for v in by_country.values() for c in v})
+    source = {"label": "IRCC 국가별 처리기간", "url": IRCC_TOOL, "updated": updated or ""}
+    # 공식 파일에 '&rsquo;' 같은 HTML 글자가 섞여 있다
+    return by_country, {c: html.unescape(names[c]) for c in used}, source
+
+
+def series_points(programs, by_country, sources):
+    """이번에 확인한 값: {계열키: (공식 갱신일, 일수)}. 국가별은 '프로그램키__국가코드'."""
+    out = {}
+    for key, p in programs.items():
+        day = iso_date(sources.get(p["source"], {}).get("updated", ""))
+        if day and p.get("days") is not None:
+            out[key] = (day, p["days"])
+    day = iso_date(sources.get("ircc_ptime_country", {}).get("updated", ""))
+    if day:
+        for key, values in by_country.items():
+            for code, days in values.items():
+                out[f"{key}__{code}"] = (day, days)
+    return out
+
+
+def load_history():
+    """지난번 기록. 처음이면(파일 없음) 빈 기록, 받다가 실패하면 멈춘다 (기록이 지워지지 않게)."""
+    try:
+        return json.loads(fetch(HISTORY_URL)).get("series", {})
+    except FileNotFoundError:
+        return {}
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            return {}
+        raise
+
+
+def update_history(series, points):
+    """공식 갱신일이나 값이 바뀌었을 때만 한 줄 더한다. 같은 갱신일이면 마지막 줄을 고친다."""
+    added = 0
+    for key, (day, days) in points.items():
+        rows = series.setdefault(key, [])
+        if rows and rows[-1][0] == day:
+            rows[-1][1] = days
+        elif not rows or rows[-1][1] != days or rows[-1][0] < day:
+            if rows and rows[-1][0] > day:
+                continue  # 더 옛날 값은 무시
+            rows.append([day, days])
+            added += 1
+        del rows[:-HISTORY_POINTS_KEPT]
+    return added
+
+
+def write_history(out: Path, series):
+    (out / "v1" / "history").mkdir(parents=True, exist_ok=True)
+    (out / "v1" / "history.json").write_text(json.dumps({"schemaVersion": 1, "series": series}, separators=(",", ":")), encoding="utf-8")
+    # 앱은 보는 계열 하나만 받는다
+    for key, rows in series.items():
+        (out / "v1" / "history" / f"{key}.json").write_text(json.dumps({"key": key, "points": rows}, separators=(",", ":")), encoding="utf-8")
 
 
 def collect_lmia():
@@ -163,6 +290,17 @@ def main():
         print(f"Express Entry 수집 실패: {e}")
         ee = None
 
+    try:
+        by_country, countries, country_source = collect_countries()
+        sources["ircc_ptime_country"] = country_source
+    except Exception as e:  # noqa: BLE001
+        print(f"국가별 처리기간 수집 실패: {e}")
+        by_country, countries = None, None
+
+    history = load_history()
+    added = update_history(history, series_points(programs, by_country or {}, sources))
+    write_history(out, history)
+
     missing = [k for k, v in programs.items() if v["days"] is None]
     data = {
         "schemaVersion": 1,
@@ -174,6 +312,9 @@ def main():
     }
     if ee:
         data["expressEntry"] = ee
+    if by_country:
+        data["byCountry"] = by_country
+        data["countries"] = countries
     (out / "v1" / "data.json").write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
 
     # 기한 규칙도 같은 곳에서 내려준다 (앱 업데이트 없이 규칙 교체용)
@@ -181,6 +322,7 @@ def main():
     rules = Path(__file__).parent / "deadline-rules.json"
     shutil.copy(rules, out / "v1" / "deadline-rules.json")
 
+    print(f"history 계열 {len(history)} · 새 기록 {added}")
     print(f"programs {len(programs)} · waitByMonth {sum(len(v) for v in wait.values())} · 값 없음 {missing or '없음'}")
 
 
