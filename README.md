@@ -13,6 +13,7 @@
 | LMIA 종류별 처리기간 | ESDC LMIA processing times |
 | 방문·슈퍼비자·스터디·워크 퍼밋(해외) 나라별 처리기간 | IRCC processing times (country) |
 | Express Entry 초청 회차 (약 2년치) | IRCC Express Entry rounds |
+| 난민 심사(RPD) 출신국별 결정 결과 (올해·작년) | IRB statistics — Claims by Country of Alleged Persecution |
 
 ## 처리기간 기록 (`v1/history.json`, `v1/history/<키>.json`)
 - IRCC가 값을 바꿀 때마다 한 줄씩 쌓아요. 나라별은 `<프로그램키>__<국가코드>` (예: `wp_outland__KR`).

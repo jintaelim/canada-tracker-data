@@ -26,6 +26,7 @@ IRCC_FLPT = "https://www.canada.ca/content/dam/ircc/documents/json/flpt-en.json"
 ESDC_LMIA = "https://www.canada.ca/en/employment-social-development/services/foreign-workers/labour-market-impact-assessment-processing-times.html"
 IRCC_EE = "https://www.canada.ca/content/dam/ircc/documents/json/ee_rounds_123_en.json"
 EE_PAGE = "https://www.canada.ca/en/immigration-refugees-citizenship/corporate/mandate/policies-operational-instructions-agreements/ministerial-instructions/express-entry-rounds.html"
+IRB_RPD = "https://www.irb-cisr.gc.ca/en/statistics/protection/Pages/RPDStat{year}.aspx"
 IRCC_TOOL = "https://www.canada.ca/en/immigration-refugees-citizenship/services/application/check-processing-times.html"
 
 # 앱 programKey → 공식 데이터 위치
@@ -85,6 +86,7 @@ HISTORY_POINTS_KEPT = 260  # 처리기간 기록은 계열마다 최근 260번 (
 LOCAL_DIR = None
 LOCAL_FILES = {
     IRCC_PTIME: "nc.json", IRCC_FLPT: "flpt.json", ESDC_LMIA: "lmia.html", IRCC_EE: "ee.json",
+    IRB_RPD.format(year=2025): "rpd2025.html", IRB_RPD.format(year=2026): "rpd2026.html",
     IRCC_PTIME_COUNTRY: "country.json", IRCC_COUNTRY_NAMES: "country-names.json", HISTORY_URL: "history.json",
 }
 
@@ -233,6 +235,55 @@ def write_history(out: Path, series):
         (out / "v1" / "history" / f"{key}.json").write_text(json.dumps({"key": key, "points": rows}, separators=(",", ":")), encoding="utf-8")
 
 
+def _num(cell: str):
+    """'1,388' → 1388, '--'(10건 미만 등 비공개) → None"""
+    c = cell.replace(",", "").strip()
+    return int(c) if c.isdigit() else None
+
+
+def collect_irb(today: dt.date):
+    """IRB 난민보호과(RPD) 국가별 결정 통계: 올해(연중)와 작년. 개인 정보 없음."""
+    cols = ["referred", "accepted", "rejected", "abandoned", "withdrawn", "finalized", "pending"]
+    years = {}
+    for year in (today.year, today.year - 1):
+        url = IRB_RPD.format(year=year)
+        try:
+            page = fetch(url)
+        except Exception as e:  # noqa: BLE001  올해 표가 아직 없을 수 있다
+            print(f"IRB {year} 통계 없음: {e}")
+            continue
+        table = re.search(r"<table.*?</table>", page, re.S)
+        if not table:
+            continue
+        table = table.group(0)
+        cap = re.search(r"<caption[^>]*>(.*?)</caption>", table, re.S)
+        caption = html.unescape(re.sub(r"<[^>]+>|\s+|\u200b", " ", cap.group(1) if cap else "")).strip()
+        caption = re.sub(r"\s+", " ", caption)
+        head = re.search(r"Pending \(as of ([\d/]+)\)", html.unescape(re.sub(r"<[^>]+>", " ", table)))
+        rows, total = {}, None
+        for tr in re.findall(r"<tr.*?</tr>", table, re.S):
+            cells = [html.unescape(re.sub(r"<[^>]+>|\s+", " ", c)).strip() for c in re.findall(r"<t[hd][^>]*>(.*?)</t[hd]>", tr, re.S)]
+            if len(cells) != 8 or not cells[0] or cells[1] == "Accepted":
+                continue
+            vals = dict(zip(cols, (_num(c) for c in cells[1:])))
+            if cells[0] == "Total":
+                total = vals
+            elif cells[0] != "(Blank)":
+                rows[cells[0]] = vals
+        if total and rows:
+            years[str(year)] = {
+                "period": re.sub(r"^Claims by Country of Alleged Persecution\s*[–-]\s*", "", caption),
+                "pendingAsOf": head.group(1) if head else None,
+                "url": url,
+                "total": total,
+                "byCountry": rows,
+            }
+    if not years:
+        raise ValueError("IRB 통계 표를 찾지 못했어요")
+    source = {"label": "IRB 난민 심사 통계", "url": IRB_RPD.format(year=max(int(y) for y in years)), "updated": years[max(years)]["period"]}
+    return {"rpd": years}, source
+
+
 def collect_lmia():
     page = fetch(ESDC_LMIA)
     table = re.search(r"<table.*?</table>", page, re.S).group(0)
@@ -297,6 +348,14 @@ def main():
         print(f"국가별 처리기간 수집 실패: {e}")
         by_country, countries = None, None
 
+    # 난민 심사 통계도 부가 정보라 실패해도 계속한다
+    try:
+        refugee, refugee_source = collect_irb(dt.date.today())
+        sources["irb_rpd"] = refugee_source
+    except Exception as e:  # noqa: BLE001
+        print(f"IRB 통계 수집 실패: {e}")
+        refugee = None
+
     history = load_history()
     added = update_history(history, series_points(programs, by_country or {}, sources))
     write_history(out, history)
@@ -312,6 +371,8 @@ def main():
     }
     if ee:
         data["expressEntry"] = ee
+    if refugee:
+        data["refugee"] = refugee
     if by_country:
         data["byCountry"] = by_country
         data["countries"] = countries
